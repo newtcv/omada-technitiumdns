@@ -193,3 +193,11 @@ docker compose up -d
 ```
 
 O pipeline segue as ações oficiais de [build e publicação](https://docs.docker.com/build/ci/github-actions/push-multi-registries/) e [gerenciamento de tags](https://docs.docker.com/build/ci/github-actions/manage-tags-labels/) do Docker.
+
+### Atualizações e alertas de vulnerabilidade
+
+A imagem usa `python:3.13-slim-trixie` e executa `apt-get update` e `apt-get upgrade` durante o build. O CI usa `pull: true` e `no-cache: true` nas construções de validação e publicação para consultar a imagem base e os repositórios APT novamente. Em builds locais, use `docker build --pull --no-cache .` para obter o mesmo comportamento.
+
+Como a aplicação usa somente a biblioteca padrão, o build remove `pip`, `setuptools`, `wheel`, `msgpack` e o instalador `ensurepip` com seu wheel embutido. Isso também remove as dependências vendorizadas pelo pip. O CI verifica a ausência dessas ferramentas e executa os testes no container. Para adicionar dependências no futuro, será necessário rever essa estratégia; não há pip na imagem de execução.
+
+Atualizar pacotes não garante ausência de CVEs: alguns alertas ainda não têm correção na distribuição. Consulte a [análise dos alertas da imagem](docs/image-security.md), que distingue componentes removidos de pendências do Debian. A nova imagem precisa ser publicada e analisada pelo seu digest; reconstruir localmente não altera uma imagem já publicada no Docker Hub.

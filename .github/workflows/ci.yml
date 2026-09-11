@@ -44,8 +44,8 @@ jobs:
           load: true
           push: false
           tags: omada-technitiumdns:ci
-          cache-from: type=gha,scope=container
-          cache-to: type=gha,mode=max,scope=container
+          pull: true
+          no-cache: true
       - name: Run tests inside container
         run: |
           docker run --rm --network none --read-only --cap-drop ALL \
@@ -54,6 +54,12 @@ jobs:
             --volume "$PWD/config.example.json:/app/config.example.json:ro" \
             --entrypoint python omada-technitiumdns:ci \
             -m unittest discover -s tests -v
+      - name: Verify runtime excludes Python packaging tools
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --entrypoint python omada-technitiumdns:ci -c \
+            'import importlib.util; modules = ("pip", "ensurepip", "setuptools", "wheel", "msgpack"); found = [name for name in modules if importlib.util.find_spec(name) is not None]; assert not found, f"Unexpected runtime packages: {found}"'
 
   publish:
     name: Publish Docker Hub image
@@ -106,8 +112,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=publish
-          cache-to: type=gha,mode=max,scope=publish
+          pull: true
+          no-cache: true
           provenance: mode=min
           sbom: true
       - name: Publication summary
