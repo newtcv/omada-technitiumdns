@@ -1,5 +1,9 @@
 FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN groupadd --gid 10001 omadasync && useradd --uid 10001 --gid omadasync --no-create-home omadasync && mkdir /data && chown omadasync:omadasync /data
 COPY omada_technitium /app/omada_technitium
