@@ -148,3 +148,48 @@ Os endpoints foram conferidos no cliente [go-omada v0.7.0](https://github.com/do
 Os 22 testes automatizados passaram localmente e na imagem Docker. Em uma simulação com Omada 6.2.14 e Technitium reais, foram validadas autenticação nos dois serviços, leitura do inventário Omada e listagem de zonas DNS. A simulação detectou reservas com nomes duplicados e interrompeu o planejamento antes de qualquer escrita. A aplicação de registros no ambiente real ainda não foi validada. Variações de firmware e controladores Cloud podem exigir adaptações.
 
 Referências: [coredns_omada](https://github.com/dougbw/coredns_omada), [go-omada](https://github.com/dougbw/go-omada/tree/v0.7.0), [API oficial do Technitium](https://github.com/TechnitiumSoftware/DnsServer/blob/master/APIDOCS.md). Esta implementação Python foi escrita para este projeto; os projetos de referência foram consultados para comportamento e contratos de API.
+
+## CI/CD e Docker Hub
+
+O workflow [CI / Docker Hub](.github/workflows/ci.yml) testa o código em Python 3.11 e 3.13, constrói a imagem e repete os testes no container. Somente após essas etapas publica em [newtcv/omada-technitiumdns](https://hub.docker.com/r/newtcv/omada-technitiumdns), para `linux/amd64` e `linux/arm64`. Os testes de execução usam amd64; a imagem arm64 é construída via QEMU. A publicação inclui metadados OCI, proveniência mínima, SBOM e digest no resumo do GitHub Actions.
+
+### Configurar a publicação
+
+1. No Docker Hub, crie um Personal Access Token com permissão **Read & Write** para uma conta que possa publicar em `newtcv/omada-technitiumdns`.
+2. No repositório GitHub, abra **Settings → Secrets and variables → Actions** e crie o **repository secret** `DOCKERHUB_TOKEN` com esse token.
+3. O usuário Docker Hub padrão é `newtcv`. Se o token pertencer a outro usuário com acesso ao mesmo repositório, defina a **repository variable** `DOCKERHUB_USERNAME`.
+4. Envie o workflow para a branch `main`. O push dispara os testes e a publicação. Também é possível usar **Actions → CI / Docker Hub → Run workflow**, selecionando `main` ou uma tag `v*`.
+
+As credenciais de Omada/Technitium não são necessárias no GitHub Actions. Não envie o `.env` ou o `config.json` local para o GitHub nem para a imagem; os testes usam apenas dados simulados e a configuração de exemplo.
+
+| Evento | Resultado |
+| --- | --- |
+| Pull request para `main`, inclusive de forks | Testes e build do container, sem login ou publicação. |
+| Push ou execução manual em `main` | Publica `latest` e `sha-<SHA completo>`. |
+| Push de tag `v1.2.3` | Publica `v1.2.3`, `1.2.3`, `1.2` e `sha-<SHA completo>`. |
+| Tag de pré-lançamento, como `v1.2.3-rc.1` | Publica a tag original, a versão de pré-lançamento e o SHA; não altera `latest`. |
+| Execução manual em outra branch | Testes e build, sem publicação. |
+
+`latest` acompanha `main`; tags de versão não alteram `latest`. Para fixar uma versão em produção, use a tag completa ou o digest da imagem. A publicação é habilitada somente no repositório `newtcv/omada-technitiumdns`.
+
+Para publicar uma versão a partir do commit desejado:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Após a primeira publicação bem-sucedida, substitua `build: .` no seu Compose por:
+
+```yaml
+image: newtcv/omada-technitiumdns:latest
+```
+
+Mantenha `env_file`, volumes e as demais opções do serviço. Então execute:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+O pipeline segue as ações oficiais de [build e publicação](https://docs.docker.com/build/ci/github-actions/push-multi-registries/) e [gerenciamento de tags](https://docs.docker.com/build/ci/github-actions/manage-tags-labels/) do Docker.

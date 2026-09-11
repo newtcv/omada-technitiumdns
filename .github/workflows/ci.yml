@@ -1,0 +1,124 @@
+name: CI / Docker Hub
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ matrix.python }}'
+      - run: python -m unittest discover -s tests -v
+
+  container:
+    name: Validate container
+    needs: unittest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Build test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: omada-technitiumdns:ci
+          cache-from: type=gha,scope=container
+          cache-to: type=gha,mode=max,scope=container
+      - name: Run tests inside container
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --volume "$PWD/tests:/app/tests:ro" \
+            --volume "$PWD/config.example.json:/app/config.example.json:ro" \
+            --entrypoint python omada-technitiumdns:ci \
+            -m unittest discover -s tests -v
+
+  publish:
+    name: Publish Docker Hub image
+    needs: [unittest, container]
+    if: >-
+      github.repository == 'newtcv/omada-technitiumdns' &&
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Serialize publishers so two runs cannot overwrite moving tags concurrently.
+    concurrency:
+      group: dockerhub-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Docker Hub credentials
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo '::error::Configure the repository secret DOCKERHUB_TOKEN with Docker Hub write access.'
+            exit 1
+          fi
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: newtcv/omada-technitiumdns
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || 'newtcv' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and publish amd64 / arm64
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
+          provenance: mode=min
+          sbom: true
+      - name: Publication summary
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo '### Docker Hub'
+            echo '```text'
+            printf '%s\n' "$IMAGE_TAGS"
+            printf 'Digest: %s\n' "$IMAGE_DIGEST"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
