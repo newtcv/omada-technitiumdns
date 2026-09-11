@@ -1,0 +1,6 @@
+*
+!omada_technitium/
+!omada_technitium/*.py
+!Dockerfile
+**/__pycache__
+**/*.pyc

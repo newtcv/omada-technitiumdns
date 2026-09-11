@@ -1,0 +1,33 @@
+{
+  "omada": {
+    "url": "https://192.168.1.2:8043",
+    "username_env": "OMADA_USERNAME",
+    "password_env": "OMADA_PASSWORD",
+    "verify_tls": true,
+    "timeout_seconds": 30
+  },
+  "technitium": {
+    "url": "http://192.168.1.3:5380",
+    "token_env": "TECHNITIUM_TOKEN",
+    "verify_tls": true,
+    "timeout_seconds": 30
+  },
+  "sites": [
+    {
+      "name": "Default",
+      "networks": [
+        {"cidr": "192.168.1.0/24", "domain": "home.arpa"}
+      ]
+    }
+  ],
+  "owner": "omada-technitium:default",
+  "interval_seconds": 300,
+  "ttl": 300,
+  "create_zones": true,
+  "reverse": true,
+  "include_devices": true,
+  "include_reservations": true,
+  "prune": false,
+  "stale_seconds": 86400,
+  "state_file": "/data/state.json"
+}
