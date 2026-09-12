@@ -24,11 +24,14 @@ def load_config(path):
     defaults = {"interval_seconds": 300, "ttl": 300, "stale_seconds": 86400,
                 "create_zones": False, "prune": False, "reverse": True,
                 "include_devices": True, "include_reservations": True,
-                "owner": "omada-technitium:default", "state_file": "data/state.json"}
+                "owner": "omada-technitium:default", "state_file": "data/state.json",
+                "name_conflict_policy": "error"}
     allowed = set(defaults) | {"omada", "technitium", "sites"}
     if set(config) - allowed:
         raise ValueError("Opções desconhecidas: " + ", ".join(sorted(set(config) - allowed)))
     config = {**defaults, **config}
+    if config["name_conflict_policy"] not in ("error", "mac_suffix"):
+        raise ValueError("name_conflict_policy deve ser error ou mac_suffix")
     for key in ("interval_seconds", "ttl", "stale_seconds"):
         if type(config[key]) is not int or config[key] < 1:
             raise ValueError(key + " deve ser inteiro positivo")
@@ -63,7 +66,7 @@ def load_config(path):
 
 def cycle(config, omada, dns, missing, dry_run=False):
     snapshots = omada.snapshot(config["sites"], config["include_devices"], config["include_reservations"])
-    desired = desired_records(snapshots, config["reverse"])
+    desired = desired_records(snapshots, config["reverse"], config.get("name_conflict_policy", "error"))
     actions, next_missing = plan(dns, desired, config["owner"], config["ttl"],
         config["create_zones"], config["prune"], config["stale_seconds"], missing, time.time())
     apply(dns, actions, dry_run)

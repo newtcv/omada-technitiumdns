@@ -21,6 +21,7 @@
     }
   ],
   "owner": "omada-technitium:default",
+  "name_conflict_policy": "error",
   "interval_seconds": 300,
   "ttl": 300,
   "create_zones": true,

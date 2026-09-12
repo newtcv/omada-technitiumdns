@@ -62,6 +62,45 @@ class RecordTests(unittest.TestCase):
         snapshots += [([{"cidr": "192.168.1.0/24", "domain": "branch.arpa"}], [], [], [])]
         self.assertEqual(desired_records(snapshots, False), {R})
 
+    def test_mac_suffix_resolves_collisions_and_ptr_independent_of_order(self):
+        rows = [{"name": "wlan0", "mac": "AA:BB:CC:DD:EE:01", "ip": R.value},
+                {"name": "wlan0", "mac": "AA-BB-CC-DD-EE-02", "ip": "192.168.1.11"},
+                {"name": "unique", "mac": "AA-BB-CC-DD-EE-03", "ip": "192.168.1.12"}]
+        records = desired_records(self.snapshot(clients=rows), name_conflict_policy="mac_suffix")
+        self.assertEqual(records, desired_records(self.snapshot(clients=list(reversed(rows))), name_conflict_policy="mac_suffix"))
+        names = {r.name for r in records if r.type == "A"}
+        self.assertEqual(names, {"wlan0-aabbccddee01.home.arpa", "wlan0-aabbccddee02.home.arpa", "unique.home.arpa"})
+        self.assertEqual({r.value for r in records if r.type == "PTR"}, names)
+
+    def test_mac_suffix_preserves_dual_stack_name(self):
+        rows = [{"name": "wlan0", "mac": "AA:BB:CC:DD:EE:01", "ip": R.value, "ipv6List": ["fd00::1"]},
+                {"name": "wlan0", "mac": "AA:BB:CC:DD:EE:02", "ip": "192.168.1.11"}]
+        records = desired_records(self.snapshot(clients=rows), False, "mac_suffix")
+        self.assertEqual({r.type for r in records if r.name == "wlan0-aabbccddee01.home.arpa"}, {"A", "AAAA"})
+
+    def test_mac_suffix_requires_valid_mac(self):
+        with self.assertRaisesRegex(ValueError, "MAC ausente"):
+            desired_records(self.snapshot(clients=[{"name": "wlan0", "ip": R.value},
+                {"name": "wlan0", "ip": "192.168.1.11"}]), False, "mac_suffix")
+
+    def test_mac_suffix_detects_collision_with_explicit_name(self):
+        rows = [{"name": "wlan0", "mac": "AA:BB:CC:DD:EE:01", "ip": R.value},
+                {"name": "wlan0", "mac": "AA:BB:CC:DD:EE:02", "ip": "192.168.1.11"},
+                {"name": "wlan0-aabbccddee01", "mac": "AA:BB:CC:DD:EE:03", "ip": "192.168.1.12"}]
+        with self.assertRaisesRegex(ValueError, "Colisão após"):
+            desired_records(self.snapshot(clients=rows), False, "mac_suffix")
+
+    def test_mac_suffix_respects_label_limit_and_wildcards(self):
+        rows = [{"clientName": "*." + "x" * 63, "mac": mac, "ip": ip, "status": True}
+                for mac, ip in [("AA:BB:CC:DD:EE:01", R.value), ("AA:BB:CC:DD:EE:02", "192.168.1.11")]]
+        records = desired_records(self.snapshot(reservations=rows), True, "mac_suffix")
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(r.type == "A" and r.name.startswith("*.") and len(r.name.split('.')[1]) == 63 for r in records))
+
+    def test_invalid_name_conflict_policy(self):
+        with self.assertRaisesRegex(ValueError, "name_conflict_policy"):
+            desired_records([], name_conflict_policy="overwrite")
+
     def test_wildcards_have_no_ptr(self):
         records = desired_records(self.snapshot(reservations=[{
             "clientName": "*.apps", "ip": R.value, "status": True}]))

@@ -34,13 +34,15 @@ class Record:
                 "ptrName" if self.type == "PTR" else "ipAddress": self.value}
 
 
-def desired_records(snapshots, reverse=True):
-    records, owners = set(), {}
+def desired_records(snapshots, reverse=True, name_conflict_policy="error"):
+    if name_conflict_policy not in ("error", "mac_suffix"):
+        raise ValueError("name_conflict_policy deve ser error ou mac_suffix")
+    records, candidates, owners = set(), [], {}
     for networks, clients, devices, reservations in snapshots:
         nets = sorted([(ipaddress.ip_network(n["cidr"], strict=False), domain(n["domain"]))
                        for n in networks], key=lambda n: -n[0].prefixlen)
         reservations = [r for r in reservations if r.get("status") is True]
-        reserved_macs = {re.sub(r"[^a-f0-9]", "", r.get("mac", "").lower()) for r in reservations}
+        reserved_macs = {re.sub(r"[^a-f0-9]", "", r.get("mac", "").lower()) for r in reservations} - {""}
         rows = [(r, "reservation") for r in reservations] + [(r, "device") for r in devices]
         rows += [(r, "client") for r in clients if r.get("active", True) and
                  re.sub(r"[^a-f0-9]", "", r.get("mac", "").lower()) not in reserved_macs]
@@ -74,10 +76,33 @@ def desired_records(snapshots, reverse=True):
                 if len(fqdn) > 253:
                     raise ValueError("Nome DNS excede 253 caracteres")
                 identity = re.sub(r"[^a-f0-9]", "", mac.lower()) or str(ip)
-                owner = owners.setdefault(fqdn, identity)
-                if owner != identity:
-                    raise ValueError(f"Colisão de nomes no Omada: {fqdn}; renomeie um dispositivo")
-                records.add(Record(zone, fqdn, "A" if ip.version == 4 else "AAAA", str(ip)))
+                owners.setdefault(fqdn, set()).add(identity)
+                candidates.append((Record(zone, fqdn, "A" if ip.version == 4 else "AAAA", str(ip)), identity, mac))
+    conflicts = {name for name, identities in owners.items() if len(identities) > 1}
+    if conflicts and name_conflict_policy == "error":
+        raise ValueError(f"Colisão de nomes no Omada: {', '.join(sorted(conflicts))}; "
+                         "renomeie os dispositivos ou configure name_conflict_policy=mac_suffix")
+    final_owners, renamed = {}, set()
+    for record, identity, mac in candidates:
+        if record.name in conflicts:
+            normalized_mac = re.sub(r"[:-]", "", mac.lower())
+            if not re.fullmatch(r"[a-f0-9]{12}", normalized_mac):
+                raise ValueError(f"Não é possível diferenciar {record.name}: MAC ausente ou inválido")
+            relative = record.name[:-(len(record.zone) + 1)]
+            wildcard = relative.startswith("*.")
+            host = relative[2:] if wildcard else relative
+            host = host[:50].rstrip("-") + "-" + normalized_mac
+            name = ("*." if wildcard else "") + host + "." + record.zone
+            if len(name) > 253:
+                raise ValueError("Nome DNS com sufixo MAC excede 253 caracteres")
+            renamed.add((record.name, name))
+            record = Record(record.zone, name, record.type, record.value)
+        previous = final_owners.setdefault(record.name, identity)
+        if previous != identity:
+            raise ValueError(f"Colisão após adicionar sufixo MAC: {record.name}; renomeie um dispositivo")
+        records.add(record)
+    for original, name in sorted(renamed):
+        logging.warning("Nome duplicado diferenciado pelo MAC: %s -> %s", original, name)
     if reverse:
         # One deterministic canonical PTR when a device has multiple aliases.
         canonical = {}

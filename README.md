@@ -83,6 +83,7 @@ O segundo comando deve retornar vazio. Se esses arquivos já estiverem rastreado
 | `prune` | Remove registros próprios ausentes após a carência; padrão `false`. |
 | `stale_seconds` | Carência desde a primeira ausência observada; 86400 segundos. |
 | `owner` | Comentário que identifica a instância; `omada-technitium:default`. |
+| `name_conflict_policy` | `error` interrompe em nomes duplicados; `mac_suffix` diferencia os nomes conflitantes pelo MAC completo. Padrão `error`. |
 | `state_file` | Guarda os horários de ausência; exemplo `/data/state.json`. |
 | `verify_tls` | Valida certificados; `true`, independente para cada servidor. |
 | `timeout_seconds` | Timeout HTTP; 30 segundos por requisição. |
@@ -109,7 +110,7 @@ No exemplo, a Filial usa os domínios das suas interfaces LAN. Redes sem domíni
 
 - O nome configurado no Omada tem prioridade. Quando vazio ou igual ao MAC, usa hostname do cliente ou descrição da reserva; o MAC é a última alternativa. Acentos são transliterados e caracteres inválidos viram hífens. Nomes são tratados como um rótulo sob o domínio configurado.
 - Reservas habilitadas têm prioridade sobre clientes com o mesmo MAC. Endereços IPv6 de `ipv6List` são incluídos somente quando pertencem a uma rede IPv6 configurada/descoberta. Endereços inválidos, link-local, loopback e multicast são ignorados.
-- Cada registro recebe o comentário exato de `owner`. Registros manuais e de outras instâncias nunca são adotados ou sobrescritos. Um conflito interrompe o planejamento completo; renomeie o dispositivo ou resolva o conflito no DNS.
+- Cada registro recebe o comentário exato de `owner`. Registros manuais e de outras instâncias nunca são adotados ou sobrescritos. Um conflito com registros manuais interrompe o planejamento completo; renomeie o dispositivo ou resolva o conflito no DNS.
 - Um registro próprio com valor único muda de IP via `records/update`, mesmo com `prune: false`. Conjuntos com múltiplos valores usam adição e limpeza por carência. TTL e estado habilitado também são reconciliados.
 - Com `prune: false`, registros antigos de dispositivos renomeados/removidos e PTRs de IPs anteriores permanecem. Ative `prune: true` para limpá-los após `stale_seconds`. A limpeza inclui registros próprios de redes removidas e fontes posteriormente desabilitadas.
 - O estado persiste no volume Docker. Perder esse arquivo reinicia a carência; não causa exclusão imediata. Mantenha o `owner` estável e exclusivo por instância. Execute somente uma instância por `owner`; o lock impede concorrência apenas quando o arquivo de estado é compartilhado.
@@ -118,6 +119,20 @@ No exemplo, a Filial usa os domínios das suas interfaces LAN. Redes sem domíni
 - Zonas existentes devem ser Primary, habilitadas e não internas. A integração nunca exclui zonas. Evite alterações concorrentes nos mesmos registros entre o planejamento e a aplicação.
 
 ## TLS e autenticação
+
+### Nomes duplicados no Omada
+
+Dispositivos diferentes podem anunciar nomes genéricos iguais, como `wlan0`. Por padrão, a integração interrompe o ciclo para não escolher arbitrariamente qual IP deve receber o nome. Você pode renomear os dispositivos no Omada ou adicionar esta opção na raiz do `config.json`:
+
+```json
+"name_conflict_policy": "mac_suffix"
+```
+
+Com essa opção, todos os dispositivos envolvidos na colisão recebem um sufixo com o MAC completo: por exemplo, `wlan0-aabbccddee01.home.arpa` e `wlan0-aabbccddee02.home.arpa`. Os PTRs apontam para os novos nomes. Nomes sem conflito permanecem iguais. A ordem da resposta da API não altera o resultado; MACs ausentes/inválidos e colisões com nomes já existentes no inventário continuam causando erro. Registros manuais do Technitium continuam protegidos.
+
+A detecção considera o inventário de cada ciclo. Se o conflito deixar de existir, o nome volta a ficar sem sufixo. Para nomes permanentes, configure nomes exclusivos no Omada. Registros antigos seguem as regras de `prune` e `stale_seconds`; com `prune: false`, permanecem até serem removidos manualmente. Revise a migração usando `--dry-run` antes de aplicar e use uma imagem que já inclua esta opção.
+
+### Conexão segura
 
 Use usuário local Omada, sem fluxo interativo de MFA/SSO. A integração utiliza cookies e CSRF e abre nova sessão a cada ciclo. Se a sessão expirar durante uma leitura, o ciclo falha e o seguinte autentica novamente. Não é um cliente OAuth da Open API pública de aplicações.
 
